@@ -64,26 +64,34 @@ class RPGAgent:
             "Hard": 20,
             "Very Hard": 25
         }
-        self.history_path = Path.home() / "rpg_history"
+        self.history_path = Path.cwd() / "rpg_history"  # Changed to current working directory
         self.history_path.mkdir(exist_ok=True)
+        self.progress = {
+            "major_events": [],
+            "current_quest": None,
+            "completed_quests": [],
+            "story_progress": 0,
+            "last_location": "",
+            "known_npcs": []
+        }
 
     def save_history(self, character_name: str, story_log: list):
-        """Save story history to file"""
         filename = self.history_path / f"{character_name.lower().replace(' ', '_')}_history.json"
         history = {
             "character": character_name,
             "timestamp": datetime.now().isoformat(),
-            "story_log": story_log
+            "story_log": story_log,
+            "progress": self.progress  # Include progress data
         }
         with open(filename, 'w') as f:
             json.dump(history, f, indent=2)
     
     def load_history(self, character_name: str) -> list:
-        """Load story history from file"""
         filename = self.history_path / f"{character_name.lower().replace(' ', '_')}_history.json"
         if filename.exists():
             with open(filename) as f:
                 history = json.load(f)
+                self.progress = history.get("progress", self.progress)
                 return history.get("story_log", [])
         return []
 
@@ -171,34 +179,40 @@ class RPGAgent:
             else:
                 roll_context = f"DICE ROLL: {roll_result['type']} - {roll_result['roll']}"
 
+        progress_context = f"""
+        CURRENT PROGRESS:
+        Quest: {self.progress['current_quest'] or 'No active quest'}
+        Location: {self.progress['last_location'] or 'Unknown'}
+        Recent Events: {', '.join(self.progress['major_events'][-3:]) if self.progress['major_events'] else 'None'}
+        Known NPCs: {', '.join(self.progress['known_npcs'][-3:]) if self.progress['known_npcs'] else 'None'}
+        Story Progress: {self.progress['story_progress']}%
+        """
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a master storyteller and game master.
-            Using the context, player action, and dice results, continue the story.
+            Using the context, progress, and player action, continue the story.
             
             PREVIOUS CONTEXT:
             {context}
+            
+            {progress_context}
             
             PLAYER ACTION:
             {action}
             
             {roll_context}
             
-            Use <think> tags to explain your reasoning, but these will be hidden from the player.
+            Use <think> tags for progress updates:
+            <think>
+            PROGRESS UPDATE:
+            - Quest: [current quest name or None]
+            - Location: [current location]
+            - Event: [major event if significant]
+            - NPCs: [new NPCs encountered]
+            - Progress: [0-100]
+            </think>
             
-            Create a response that:
-            1. Acknowledges the player's action
-            2. Incorporates any dice roll results naturally into the narrative
-            3. Advances the story based on success/failure if applicable
-            4. Ends with 2-3 possible action choices
-            
-            Example format:
-            <think>The player attempted a difficult jump. The roll was successful, so I'll describe a graceful landing.</think>
-            Your character leaps gracefully across the chasm, landing softly on the other side.
-            
-            Options:
-            1. Continue forward
-            2. Look back for followers
-            3. Check the surroundings""")
+            [Story continuation]""")
         ])
         
         chain = (prompt | self.llm | StrOutputParser())
@@ -207,6 +221,38 @@ class RPGAgent:
             "action": player_action,
             "roll_context": roll_context
         })
+
+        think_match = re.search(r'<think>(.*?)</think>', response, re.DOTALL)
+        if think_match:
+            think_content = think_match.group(1)
+            
+            # Update quest
+            quest_match = re.search(r'Quest: (.*?)(?:\n|$)', think_content)
+            if quest_match and quest_match.group(1).strip() not in ['None', '[current quest name or None]']:
+                if self.progress['current_quest']:
+                    self.progress['completed_quests'].append(self.progress['current_quest'])
+                self.progress['current_quest'] = quest_match.group(1).strip()
+            
+            # Update location
+            loc_match = re.search(r'Location: (.*?)(?:\n|$)', think_content)
+            if loc_match and loc_match.group(1).strip() not in ['[current location]']:
+                self.progress['last_location'] = loc_match.group(1).strip()
+            
+            # Update events
+            event_match = re.search(r'Event: (.*?)(?:\n|$)', think_content)
+            if event_match and event_match.group(1).strip() not in ['[major event if significant]']:
+                self.progress['major_events'].append(event_match.group(1).strip())
+            
+            # Update NPCs
+            npc_match = re.search(r'NPCs: (.*?)(?:\n|$)', think_content)
+            if npc_match and npc_match.group(1).strip() not in ['[new NPCs encountered]']:
+                new_npcs = [npc.strip() for npc in npc_match.group(1).split(',')]
+                self.progress['known_npcs'].extend(new_npcs)
+            
+            # Update progress percentage
+            prog_match = re.search(r'Progress: (\d+)', think_content)
+            if prog_match:
+                self.progress['story_progress'] = min(100, int(prog_match.group(1)))
         
         # Filter out think content and store in memory
         filtered_response = self.filter_think_content(response)
@@ -303,6 +349,31 @@ if st.session_state.character:
         st.markdown(f"**Class:** {st.session_state.character['class']}")
         st.markdown("---")
         st.markdown(st.session_state.character['profile'])
+    
+    st.header("📊 Story Progress")
+    col1, col2 = st.columns([2,1])
+    
+    with col1:
+        progress = st.session_state.rpg_agent.progress
+        st.markdown(f"**Current Quest:** {progress['current_quest'] or 'No active quest'}")
+        st.markdown(f"**Location:** {progress['last_location'] or 'Unknown'}")
+        
+        if progress['major_events']:
+            st.markdown("**Recent Events:**")
+            for event in progress['major_events'][-3:]:
+                st.markdown(f"⚔️ {event}")
+        
+        if progress['known_npcs']:
+            st.markdown("**Known NPCs:**")
+            for npc in progress['known_npcs'][-3:]:
+                st.markdown(f"👤 {npc}")
+    
+    with col2:
+        st.progress(progress['story_progress'] / 100)
+        st.caption(f"Story Progress: {progress['story_progress']}%")
+        st.caption(f"Completed Quests: {len(progress['completed_quests'])}")
+
+    st.markdown("---")
     
     # Story interaction
     st.header("📖 Story Progression")
