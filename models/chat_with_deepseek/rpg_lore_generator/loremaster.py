@@ -218,6 +218,7 @@ class RPGAgent:
         chain = (prompt | self.llm | StrOutputParser())
         response = chain.invoke({
             "context": context,
+            "progress_context": progress_context,
             "action": player_action,
             "roll_context": roll_context
         })
