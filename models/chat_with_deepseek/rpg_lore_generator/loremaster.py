@@ -2,13 +2,16 @@ import streamlit as st
 import time
 import json
 import random
+import re
+import os
+from pathlib import Path
 from datetime import datetime
 from langchain_community.llms import Ollama
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-import re
+
 
 # Dark theme styling
 st.markdown("""
@@ -53,47 +56,124 @@ class RPGAgent:
             model_name="sentence-transformers/all-MiniLM-L6-v2",
             model_kwargs={'device': 'cpu'}
         )
-        # Initialize memory store
-        self.memory = FAISS.from_texts(
-            ["Campaign begins."],
-            self.embeddings
-        )
-        
-    def roll_dice(self, dice_type: str) -> int:
-        """Simulate dice rolls (d4, d6, d8, d10, d12, d20, d100)"""
-        sides = int(dice_type.replace('d', ''))
-        return random.randint(1, sides)
+        self.memory = FAISS.from_texts(["Campaign begins."], self.embeddings)
+        self.difficulty_levels = {
+            "Very Easy": 5,
+            "Easy": 10,
+            "Medium": 15,
+            "Hard": 20,
+            "Very Hard": 25
+        }
+        self.history_path = Path.home() / "rpg_history"
+        self.history_path.mkdir(exist_ok=True)
+
+    def save_history(self, character_name: str, story_log: list):
+        """Save story history to file"""
+        filename = self.history_path / f"{character_name.lower().replace(' ', '_')}_history.json"
+        history = {
+            "character": character_name,
+            "timestamp": datetime.now().isoformat(),
+            "story_log": story_log
+        }
+        with open(filename, 'w') as f:
+            json.dump(history, f, indent=2)
+    
+    def load_history(self, character_name: str) -> list:
+        """Load story history from file"""
+        filename = self.history_path / f"{character_name.lower().replace(' ', '_')}_history.json"
+        if filename.exists():
+            with open(filename) as f:
+                history = json.load(f)
+                return history.get("story_log", [])
+        return []
+
+    def filter_think_content(self, text: str) -> str:
+        """Remove content between <think> tags"""
+        return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
     
     def generate_character(self, name: str, race: str, class_type: str) -> str:
+        """Generate character profile and backstory"""
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a character creation expert for fantasy RPGs.
-            Create a detailed character profile including:
-            1. Background story
-            2. Personality traits
-            3. Basic statistics (HP, MP, etc.)
-            4. Special abilities
-            5. Starting equipment
+            ("system", """Create a character profile for a fantasy RPG character.
+            Include:
+            - Brief backstory
+            - Personality traits
+            - Notable skills
+            - Distinctive features
             
-            CHARACTER DETAILS:
+            CHARACTER INFO:
             Name: {name}
             Race: {race}
             Class: {class_type}
             
-            Provide the profile in a well-formatted markdown structure."""),
-            ("human", "Generate character profile")
+            Use <think> tags for your reasoning, which will be hidden.
+            Format the response in Markdown.""")
         ])
         
-        chain = (prompt | self.llm | StrOutputParser())
-        return chain.invoke({
-            "name": name,
-            "race": race,
-            "class_type": class_type
-        })
-    
-    def generate_lore(self, context: str, player_action: str) -> str:
+        try:
+            chain = (prompt | self.llm | StrOutputParser())
+            response = chain.invoke({
+                "name": name,
+                "race": race,
+                "class_type": class_type
+            })
+            
+            # Filter out think content
+            return self.filter_think_content(response)
+            
+        except Exception as e:
+            return f"""
+            **{name}**
+            A mysterious {race} {class_type}.
+            *Character details will be revealed as the story unfolds...*
+            """
+
+    def interpret_roll(self, roll: int, difficulty: str) -> dict:
+        """Interpret d20 roll results based on difficulty"""
+        dc = self.difficulty_levels[difficulty]
+        success = roll >= dc
+        
+        if roll == 20:
+            outcome = "Critical Success!"
+        elif roll == 1:
+            outcome = "Critical Failure!"
+        elif success:
+            outcome = "Success"
+        else:
+            outcome = "Failure"
+        
+        return {
+            "roll": roll,
+            "dc": dc,
+            "difficulty": difficulty,
+            "success": success,
+            "outcome": outcome
+        }
+
+    def roll_dice(self, dice_type: str, difficulty: str = "Medium") -> dict:
+        sides = int(dice_type.replace('d', ''))
+        roll = random.randint(1, sides)
+        
+        if dice_type == "d20":
+            return self.interpret_roll(roll, difficulty)
+        return {"roll": roll, "type": dice_type}
+
+    def generate_lore(self, context: str, player_action: str, roll_result: dict = None) -> str:
+        roll_context = ""
+        if roll_result:
+            if "outcome" in roll_result:
+                roll_context = f"""
+                DICE CHECK RESULT:
+                Roll: d20 - {roll_result['roll']}
+                Difficulty: {roll_result['difficulty']} (DC {roll_result['dc']})
+                Outcome: {roll_result['outcome']}
+                """
+            else:
+                roll_context = f"DICE ROLL: {roll_result['type']} - {roll_result['roll']}"
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a master storyteller and game master.
-            Using the context and player action, continue the story in an engaging way.
+            Using the context, player action, and dice results, continue the story.
             
             PREVIOUS CONTEXT:
             {context}
@@ -101,26 +181,38 @@ class RPGAgent:
             PLAYER ACTION:
             {action}
             
-            Create a rich narrative response that:
-            1. Acknowledges the player's action
-            2. Advances the story
-            3. Provides new choices or challenges
-            4. Maintains consistency with previous events
+            {roll_context}
             
-            End with 2-3 possible action choices for the player."""),
-            ("human", "Continue the story")
+            Use <think> tags to explain your reasoning, but these will be hidden from the player.
+            
+            Create a response that:
+            1. Acknowledges the player's action
+            2. Incorporates any dice roll results naturally into the narrative
+            3. Advances the story based on success/failure if applicable
+            4. Ends with 2-3 possible action choices
+            
+            Example format:
+            <think>The player attempted a difficult jump. The roll was successful, so I'll describe a graceful landing.</think>
+            Your character leaps gracefully across the chasm, landing softly on the other side.
+            
+            Options:
+            1. Continue forward
+            2. Look back for followers
+            3. Check the surroundings""")
         ])
         
         chain = (prompt | self.llm | StrOutputParser())
         response = chain.invoke({
             "context": context,
-            "action": player_action
+            "action": player_action,
+            "roll_context": roll_context
         })
         
-        # Store in memory
-        self.memory.add_texts([player_action, response])
+        # Filter out think content and store in memory
+        filtered_response = self.filter_think_content(response)
+        self.memory.add_texts([player_action, filtered_response])
         
-        return response
+        return filtered_response
 
 # Initialize session state
 if 'rpg_agent' not in st.session_state:
@@ -129,8 +221,10 @@ if 'character' not in st.session_state:
     st.session_state.character = None
 if 'story_log' not in st.session_state:
     st.session_state.story_log = []
+if 'last_roll' not in st.session_state:
+    st.session_state.last_roll = None
 
-st.title("🎲 AI RPG Lore Generator")
+st.title("🎲 Save the Kingdom - IA RPG")
 st.caption("Interactive Storytelling & Character Management")
 
 # Sidebar for character creation
@@ -141,6 +235,22 @@ with st.sidebar:
     char_class = st.selectbox("Class", ["Warrior", "Mage", "Rogue", "Cleric", "Ranger"])
     
     if st.button("🎭 Generate Character"):
+        if st.session_state.character:
+            if st.sidebar.checkbox("⚠️ Creating a new character will reset current game. Continue?"):
+                # Save current history
+                if st.session_state.character["name"]:
+                    st.session_state.rpg_agent.save_history(
+                        st.session_state.character["name"],
+                        st.session_state.story_log
+                    )
+                # Reset game state
+                st.session_state.story_log = []
+                st.session_state.last_roll = None
+                st.session_state.rpg_agent.memory = FAISS.from_texts(
+                    ["Campaign begins."], 
+                    st.session_state.rpg_agent.embeddings
+                )
+        
         with st.spinner("Creating character..."):
             profile = st.session_state.rpg_agent.generate_character(
                 char_name, char_race, char_class
@@ -151,6 +261,38 @@ with st.sidebar:
                 "class": char_class,
                 "profile": profile
             }
+            
+            # Load previous history if exists
+            previous_log = st.session_state.rpg_agent.load_history(char_name)
+            if previous_log:
+                st.sidebar.info("📜 Found previous adventures for this character!")
+                if st.sidebar.button("Load Previous History"):
+                    st.session_state.story_log = previous_log
+    
+    # Add separator
+    st.markdown("---")
+    
+    # Dice roller in sidebar
+    st.header("🎲 Dice Roller")
+    dice_type = st.selectbox("Select dice", ["d20", "d4", "d6", "d8", "d10", "d12", "d100"])
+    if dice_type == "d20":
+        difficulty = st.selectbox("Difficulty", list(st.session_state.rpg_agent.difficulty_levels.keys()))
+    
+    if st.button("Roll Dice"):
+        result = st.session_state.rpg_agent.roll_dice(
+            dice_type, 
+            difficulty if dice_type == "d20" else "Medium"
+        )
+        if "outcome" in result:
+            st.markdown(f"""
+            <div class='dice-roll'>
+                🎲 {result['roll']}<br>
+                <small>{result['outcome']}</small>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div class='dice-roll'>🎲 {result['roll']}</div>", unsafe_allow_html=True)
+        st.session_state.last_roll = result
 
 # Main game interface
 if st.session_state.character:
@@ -162,50 +304,52 @@ if st.session_state.character:
         st.markdown("---")
         st.markdown(st.session_state.character['profile'])
     
-    # Dice roller
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.subheader("🎲 Dice Roller")
-        dice_type = st.selectbox("Select dice", ["d4", "d6", "d8", "d10", "d12", "d20", "d100"])
-    with col2:
-        if st.button("Roll"):
-            result = st.session_state.rpg_agent.roll_dice(dice_type)
-            st.markdown(f"<div class='dice-roll'>{result}</div>", unsafe_allow_html=True)
-    
     # Story interaction
     st.header("📖 Story Progression")
     
-    # Display story log
     for entry in st.session_state.story_log:
         st.markdown(f"<div class='story-block'>{entry}</div>", unsafe_allow_html=True)
     
-    # Player input
     player_action = st.text_area("What do you do?", height=100)
     
-    if st.button("⚡ Take Action"):
-        if player_action.strip():
-            with st.spinner("The story unfolds..."):
-                # Get recent context
-                recent_docs = st.session_state.rpg_agent.memory.similarity_search(
-                    player_action, k=3
-                )
-                context = "\n".join([doc.page_content for doc in recent_docs])
-                
-                # Generate response
-                response = st.session_state.rpg_agent.generate_lore(
-                    context, player_action
-                )
-                
-                # Update story log
-                st.session_state.story_log.append(f"**You:** {player_action}")
-                st.session_state.story_log.append(f"**Story:** {response}")
-                
-                # Rerun to update display
-                st.rerun()
+    col1, col2 = st.columns([4,1])
+    with col1:
+        if st.button("⚡ Take Action", use_container_width=True):
+            if player_action.strip():
+                with st.spinner("The story unfolds..."):
+                    recent_docs = st.session_state.rpg_agent.memory.similarity_search(
+                        player_action, k=3
+                    )
+                    context = "\n".join([doc.page_content for doc in recent_docs])
+                    
+                    roll_result = st.session_state.last_roll
+                    response = st.session_state.rpg_agent.generate_lore(
+                        context, 
+                        player_action,
+                        roll_result
+                    )
+                    
+                    if roll_result and "outcome" in roll_result:
+                        st.session_state.story_log.append(
+                            f"**Roll:** 🎲 {roll_result['roll']} - {roll_result['outcome']}"
+                        )
+                    st.session_state.story_log.append(f"**You:** {player_action}")
+                    st.session_state.story_log.append(f"**Story:** {response}")
+                    
+                    st.session_state.last_roll = None
+                    st.rerun()
+    
+    with col2:
+        if st.button("💾 Save Game", use_container_width=True):
+            st.session_state.rpg_agent.save_history(
+                st.session_state.character["name"],
+                st.session_state.story_log
+            )
+            st.success("Game saved!")
 
 else:
     st.info("👈 Create your character to begin the adventure!")
 
 # Footer
 st.markdown("---")
-st.caption("🐳 Deepseek powered RPG board game made by @manthysbr")
+st.caption("🐳 Deepseek powered RPG text game made by @manthysbr")
