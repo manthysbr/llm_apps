@@ -44,6 +44,7 @@ Each agent is designed to handle specific business operations:
 - Market research
 - Investment strategies
 - Financial reporting
+- Finance Self Manager ( manage your bills )
 
 ### 🎓 Educational Division
 - Course content creation

@@ -10,8 +10,54 @@ from langchain_community.llms import Ollama
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
+import numpy as np
+import fitz 
 
+
+qdrant_client = QdrantClient(host="localhost", port=6333)
+
+# Initialize Qdrant client
+def initialize_qdrant_collections():
+    """Initialize Qdrant collections if they don't exist"""
+    try:
+        for collection in ["lore_chunks", "story_memory"]:
+            try:
+                collections = qdrant_client.get_collections().collections
+                collection_names = [c.name for c in collections]
+                
+                if collection not in collection_names:
+                    qdrant_client.create_collection(
+                        collection_name=collection,
+                        vectors_config=models.VectorParams(
+                            size=384, 
+                            distance=models.Distance.COSINE
+                        )
+                    )
+                    print(f"Created collection: {collection}")
+            except Exception as e:
+                print(f"Error with collection {collection}: {e}")
+                # Try to recreate if there's an issue
+                try:
+                    qdrant_client.recreate_collection(
+                        collection_name=collection,
+                        vectors_config=models.VectorParams(
+                            size=384,
+                            distance=models.Distance.COSINE
+                        )
+                    )
+                    print(f"Recreated collection: {collection}")
+                except Exception as e:
+                    print(f"Failed to recreate collection {collection}: {e}")
+                    raise
+    except Exception as e:
+        print(f"Critical Qdrant initialization error: {e}")
+        raise
+
+# Init
+initialize_qdrant_collections()
 
 # Dark theme styling
 st.markdown("""
@@ -56,15 +102,13 @@ class RPGAgent:
             model_name="sentence-transformers/all-MiniLM-L6-v2",
             model_kwargs={'device': 'cpu'}
         )
-        self.memory = FAISS.from_texts(["Campaign begins."], self.embeddings)
-        self.difficulty_levels = {
-            "Very Easy": 5,
-            "Easy": 10,
-            "Medium": 15,
-            "Hard": 20,
-            "Very Hard": 25
-        }
-        self.history_path = Path.cwd() / "rpg_history"  # Changed to current working directory
+        self.qdrant = qdrant_client
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            separators=["\n\n", "\n", ".", "!"]
+        )
+        self.history_path = Path.cwd() / "rpg_history"
         self.history_path.mkdir(exist_ok=True)
         self.progress = {
             "major_events": [],
@@ -73,6 +117,71 @@ class RPGAgent:
             "story_progress": 0,
             "last_location": "",
             "known_npcs": []
+        }
+        self.difficulty_levels = {
+            "Easy": 10,
+            "Medium": 15,
+            "Hard": 20,
+            "Very Hard": 25,
+            "Legendary": 30
+        }
+        # Initialize FAISS memory
+        self._add_to_memory("Campaign begins.")
+
+
+    def _add_to_memory(self, text: str):
+        """Add text to story memory in Qdrant"""
+        vector = self._get_embedding(text)
+        self.qdrant.upsert(
+            collection_name="story_memory",
+            points=[models.PointStruct(
+                id=int(datetime.now().timestamp() * 1000),
+                vector=vector,
+                payload={"content": text}
+            )]
+        )
+
+    def get_recent_memory(self, query: str, k: int = 3) -> str:
+        """Get recent relevant memory entries"""
+        query_vector = self._get_embedding(query)
+        results = self.qdrant.search(
+            collection_name="story_memory",
+            query_vector=query_vector,
+            limit=k
+        )
+        return "\n".join([hit.payload["content"] for hit in results])
+
+
+    def _get_embedding(self, text: str) -> list:
+        """Get embedding for text using HuggingFace embeddings"""
+        return self.embeddings.embed_query(text)
+
+    def process_lore_pdf(self, pdf_content: bytes) -> dict:
+        """Process PDF content and store in Qdrant"""
+        # Extract text from PDF
+        doc = fitz.open(stream=pdf_content, filetype="pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        
+        # Split into chunks
+        chunks = self.text_splitter.split_text(text)
+        
+        # Store chunks in Qdrant
+        for i, chunk in enumerate(chunks):
+            vector = self._get_embedding(chunk)
+            self.qdrant.upsert(
+                collection_name="lore_chunks",
+                points=[models.PointStruct(
+                    id=int(datetime.now().timestamp() * 1000) + i,
+                    vector=vector,
+                    payload={"content": chunk}
+                )]
+            )
+        
+        return {
+            "chunks": len(chunks),
+            "preview": text[:500] + "..."
         }
 
     def save_history(self, character_name: str, story_log: list):
@@ -95,19 +204,40 @@ class RPGAgent:
                 return history.get("story_log", [])
         return []
 
+    def query_lore(self, query: str, limit: int = 3) -> list:
+        """Query the lore database"""
+        query_vector = self._get_embedding(query)
+        
+        search_result = self.qdrant.search(
+            collection_name="lore_chunks",
+            query_vector=query_vector,
+            limit=limit
+        )
+        
+        return [hit.payload["content"] for hit in search_result]
+
     def filter_think_content(self, text: str) -> str:
         """Remove content between <think> tags"""
         return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
     
     def generate_character(self, name: str, race: str, class_type: str) -> str:
-        """Generate character profile and backstory"""
+        """Generate character profile and backstory using available lore"""
+        # Query lore for relevant background information
+        lore_context = "\n\n".join(self.query_lore(f"{race} {class_type} background culture history"))
+        
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """Create a character profile for a fantasy RPG character.
+            ("system", """Create a character profile for a fantasy RPG character using the provided lore.
+            Use the lore context to tie the character's background to the world's history and culture.
+            
+            LORE CONTEXT:
+            {lore_context}
+            
             Include:
-            - Brief backstory
+            - Brief backstory connected to the world's lore
             - Personality traits
             - Notable skills
             - Distinctive features
+            - Cultural elements from their race/class background
             
             CHARACTER INFO:
             Name: {name}
@@ -123,10 +253,10 @@ class RPGAgent:
             response = chain.invoke({
                 "name": name,
                 "race": race,
-                "class_type": class_type
+                "class_type": class_type,
+                "lore_context": lore_context
             })
             
-            # Filter out think content
             return self.filter_think_content(response)
             
         except Exception as e:
@@ -167,6 +297,7 @@ class RPGAgent:
         return {"roll": roll, "type": dice_type}
 
     def generate_lore(self, context: str, player_action: str, roll_result: dict = None) -> str:
+        lore_context = "\n\n".join(self.query_lore(player_action))
         roll_context = ""
         if roll_result:
             if "outcome" in roll_result:
@@ -190,10 +321,13 @@ class RPGAgent:
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a master storyteller and game master.
-            Using the context, progress, and player action, continue the story.
+            Using the context, lore, progress, and player action, continue the story.
             
             PREVIOUS CONTEXT:
             {context}
+            
+            LORE CONTEXT:
+            {lore_context}
             
             {progress_context}
             
@@ -218,6 +352,7 @@ class RPGAgent:
         chain = (prompt | self.llm | StrOutputParser())
         response = chain.invoke({
             "context": context,
+            "lore_context": lore_context,
             "progress_context": progress_context,
             "action": player_action,
             "roll_context": roll_context
@@ -257,8 +392,6 @@ class RPGAgent:
         
         # Filter out think content and store in memory
         filtered_response = self.filter_think_content(response)
-        self.memory.add_texts([player_action, filtered_response])
-        
         return filtered_response
 
 # Initialize session state
@@ -270,80 +403,122 @@ if 'story_log' not in st.session_state:
     st.session_state.story_log = []
 if 'last_roll' not in st.session_state:
     st.session_state.last_roll = None
+if 'lore_uploaded' not in st.session_state:
+    st.session_state.lore_uploaded = False
+if 'trigger_action' not in st.session_state:
+    st.session_state.trigger_action = False
+if 'current_action' not in st.session_state:
+    st.session_state.current_action = ""
+if 'lore_processed' not in st.session_state:
+    st.session_state.lore_processed = False
 
+# Main title
 st.title("🎲 Save the Kingdom - IA RPG")
 st.caption("Interactive Storytelling & Character Management")
 
-# Sidebar for character creation
+# Sidebar UI
 with st.sidebar:
-    st.header("⚔️ Character Creation")
-    char_name = st.text_input("Character Name", key="char_name")
-    char_race = st.selectbox("Race", ["Human", "Elf", "Dwarf", "Halfling", "Orc"])
-    char_class = st.selectbox("Class", ["Warrior", "Mage", "Rogue", "Cleric", "Ranger"])
+    if not st.session_state.lore_processed:  # Change condition from lore_uploaded
+        st.header("📚 Upload World Lore")
+        st.info("⚠️ You must upload a fantasy book (PDF) to begin the adventure!")
+        uploaded_file = st.file_uploader("Upload Fantasy Book (PDF)", type="pdf")
+        if uploaded_file:
+            with st.spinner("Processing world lore..."):
+                try:
+                    result = st.session_state.rpg_agent.process_lore_pdf(uploaded_file.read())
+                    st.success(f"Processed {result['chunks']} lore chunks!")
+                    st.session_state.lore_uploaded = True
+                    st.session_state.lore_processed = True  # Set processed state
+                    with st.expander("World Preview"):
+                        st.markdown(f"<div class='story-block'>{result['preview']}</div>", 
+                                  unsafe_allow_html=True)
+                    st.rerun()  # Force UI update
+                except Exception as e:
+                    st.error(f"Error processing lore: {e}")
+                    st.session_state.lore_uploaded = False
+                    st.session_state.lore_processed = False
     
-    if st.button("🎭 Generate Character"):
-        if st.session_state.character:
-            if st.sidebar.checkbox("⚠️ Creating a new character will reset current game. Continue?"):
-                # Save current history
-                if st.session_state.character["name"]:
-                    st.session_state.rpg_agent.save_history(
-                        st.session_state.character["name"],
-                        st.session_state.story_log
-                    )
-                # Reset game state
-                st.session_state.story_log = []
-                st.session_state.last_roll = None
-                st.session_state.rpg_agent.memory = FAISS.from_texts(
-                    ["Campaign begins."], 
-                    st.session_state.rpg_agent.embeddings
-                )
+    elif not st.session_state.character:
+        st.header("⚔️ Character Creation")
+        st.info("Create your character using the world's lore")
         
-        with st.spinner("Creating character..."):
-            profile = st.session_state.rpg_agent.generate_character(
-                char_name, char_race, char_class
-            )
-            st.session_state.character = {
-                "name": char_name,
-                "race": char_race,
-                "class": char_class,
-                "profile": profile
-            }
-            
-            # Load previous history if exists
-            previous_log = st.session_state.rpg_agent.load_history(char_name)
-            if previous_log:
-                st.sidebar.info("📜 Found previous adventures for this character!")
-                if st.sidebar.button("Load Previous History"):
-                    st.session_state.story_log = previous_log
+        char_name = st.text_input("Character Name", key="char_name")
+        char_race = st.selectbox("Race", ["Human", "Elf", "Dwarf", "Halfling", "Orc"])
+        char_class = st.selectbox("Class", ["Warrior", "Mage", "Rogue", "Cleric", "Ranger"])
+        
+        if st.button("🎭 Generate Character", disabled=not char_name):
+            with st.spinner("Creating character from world lore..."):
+                profile = st.session_state.rpg_agent.generate_character(
+                    char_name, char_race, char_class
+                )
+                st.session_state.character = {
+                    "name": char_name,
+                    "race": char_race,
+                    "class": char_class,
+                    "profile": profile
+                }
+                
+                # Check for previous adventures
+                previous_log = st.session_state.rpg_agent.load_history(char_name)
+                if previous_log:
+                    st.info("📜 Found previous adventures!")
+                    if st.button("Load Previous History"):
+                        st.session_state.story_log = previous_log
+                        st.rerun()
     
-    # Add separator
-    st.markdown("---")
-    
-    # Dice roller in sidebar
-    st.header("🎲 Dice Roller")
-    dice_type = st.selectbox("Select dice", ["d20", "d4", "d6", "d8", "d10", "d12", "d100"])
-    if dice_type == "d20":
-        difficulty = st.selectbox("Difficulty", list(st.session_state.rpg_agent.difficulty_levels.keys()))
-    
-    if st.button("Roll Dice"):
-        result = st.session_state.rpg_agent.roll_dice(
-            dice_type, 
-            difficulty if dice_type == "d20" else "Medium"
-        )
-        if "outcome" in result:
-            st.markdown(f"""
-            <div class='dice-roll'>
-                🎲 {result['roll']}<br>
-                <small>{result['outcome']}</small>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"<div class='dice-roll'>🎲 {result['roll']}</div>", unsafe_allow_html=True)
-        st.session_state.last_roll = result
+    else:
+        # Game Controls
+        st.header("🎮 Game Controls")
+        
+        # Dice Roller
+        st.subheader("🎲 Dice Roller")
+        dice_type = st.selectbox("Select dice", ["d20", "d4", "d6", "d8", "d10", "d12", "d100"])
+        
+        if dice_type == "d20":
+            difficulty = st.selectbox("Difficulty", 
+                                   list(st.session_state.rpg_agent.difficulty_levels.keys()))
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🎲 Roll", use_container_width=True):
+                result = st.session_state.rpg_agent.roll_dice(
+                    dice_type, 
+                    difficulty if dice_type == "d20" else "Medium"
+                )
+                st.session_state.last_roll = result
+                st.session_state.trigger_action = True  # Auto-trigger action
+                
+                if "outcome" in result:
+                    st.markdown(f"""
+                    <div class='dice-roll'>
+                        🎲 {result['roll']}<br>
+                        <small>{result['outcome']}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<div class='dice-roll'>🎲 {result['roll']}</div>", 
+                              unsafe_allow_html=True)
+        
+        with col2:
+            if st.button("💾 Save", use_container_width=True):
+                st.session_state.rpg_agent.save_history(
+                    st.session_state.character["name"],
+                    st.session_state.story_log
+                )
+                st.success("Saved!")
+        
+        # Quick Lore Search
+        st.subheader("📚 Quick Lore")
+        lore_query = st.text_input("Search world lore...")
+        if lore_query:
+            results = st.session_state.rpg_agent.query_lore(lore_query)
+            for result in results:
+                st.markdown(f"<div class='story-block'>{result}</div>", 
+                          unsafe_allow_html=True)
 
-# Main game interface
+# Main game area
 if st.session_state.character:
-    # Display character sheet
+    # Character Sheet
     with st.expander("📜 Character Sheet", expanded=False):
         st.markdown(f"### {st.session_state.character['name']}")
         st.markdown(f"**Race:** {st.session_state.character['race']}")
@@ -351,11 +526,12 @@ if st.session_state.character:
         st.markdown("---")
         st.markdown(st.session_state.character['profile'])
     
-    st.header("📊 Story Progress")
-    col1, col2 = st.columns([2,1])
+    # Story Progress
+    progress = st.session_state.rpg_agent.progress
+    col1, col2 = st.columns([3,1])
     
     with col1:
-        progress = st.session_state.rpg_agent.progress
+        st.header("📖 Adventure Status")
         st.markdown(f"**Current Quest:** {progress['current_quest'] or 'No active quest'}")
         st.markdown(f"**Location:** {progress['last_location'] or 'Unknown'}")
         
@@ -370,57 +546,56 @@ if st.session_state.character:
                 st.markdown(f"👤 {npc}")
     
     with col2:
+        st.metric("Story Progress", f"{progress['story_progress']}%")
+        st.metric("Completed Quests", len(progress['completed_quests']))
         st.progress(progress['story_progress'] / 100)
-        st.caption(f"Story Progress: {progress['story_progress']}%")
-        st.caption(f"Completed Quests: {len(progress['completed_quests'])}")
-
+    
     st.markdown("---")
     
-    # Story interaction
-    st.header("📖 Story Progression")
-    
+    # Story Display
+    st.header("📜 Story")
     for entry in st.session_state.story_log:
         st.markdown(f"<div class='story-block'>{entry}</div>", unsafe_allow_html=True)
     
-    player_action = st.text_area("What do you do?", height=100)
+    # Action Input
+    player_action = st.text_area("What do you do?", height=100, key="current_action")
     
-    col1, col2 = st.columns([4,1])
-    with col1:
-        if st.button("⚡ Take Action", use_container_width=True):
-            if player_action.strip():
-                with st.spinner("The story unfolds..."):
-                    recent_docs = st.session_state.rpg_agent.memory.similarity_search(
-                        player_action, k=3
-                    )
-                    context = "\n".join([doc.page_content for doc in recent_docs])
-                    
-                    roll_result = st.session_state.last_roll
-                    response = st.session_state.rpg_agent.generate_lore(
-                        context, 
-                        player_action,
-                        roll_result
-                    )
-                    
-                    if roll_result and "outcome" in roll_result:
-                        st.session_state.story_log.append(
-                            f"**Roll:** 🎲 {roll_result['roll']} - {roll_result['outcome']}"
-                        )
-                    st.session_state.story_log.append(f"**You:** {player_action}")
-                    st.session_state.story_log.append(f"**Story:** {response}")
-                    
-                    st.session_state.last_roll = None
-                    st.rerun()
-    
-    with col2:
-        if st.button("💾 Save Game", use_container_width=True):
-            st.session_state.rpg_agent.save_history(
-                st.session_state.character["name"],
-                st.session_state.story_log
-            )
-            st.success("Game saved!")
+    if st.button("⚡ Take Action", use_container_width=True) or st.session_state.trigger_action:
+        if player_action.strip():
+            with st.spinner("The story unfolds..."):
+                context = st.session_state.rpg_agent.get_recent_memory(player_action)
+                roll_result = st.session_state.last_roll
+                response = st.session_state.rpg_agent.generate_lore(
+                    context, 
+                    player_action,
+                    roll_result
+                )
+                
+                # Add entries to memory
+                if roll_result and "outcome" in roll_result:
+                    roll_entry = f"**Roll:** 🎲 {roll_result['roll']} - {roll_result['outcome']}"
+                    st.session_state.rpg_agent._add_to_memory(roll_entry)
+                    st.session_state.story_log.append(roll_entry)
+                
+                action_entry = f"**You:** {player_action}"
+                story_entry = f"**Story:** {response}"
+                
+                st.session_state.rpg_agent._add_to_memory(action_entry)
+                st.session_state.rpg_agent._add_to_memory(story_entry)
+                
+                st.session_state.story_log.append(action_entry)
+                st.session_state.story_log.append(story_entry)
+                
+                # Reset states
+                st.session_state.last_roll = None
+                st.session_state.trigger_action = False
+                st.rerun()
 
 else:
-    st.info("👈 Create your character to begin the adventure!")
+    if not st.session_state.lore_uploaded:
+        st.warning("👈 First, upload a fantasy book (PDF) to create the game world!")
+    else:
+        st.info("👈 Create your character to begin the adventure!")
 
 # Footer
 st.markdown("---")
