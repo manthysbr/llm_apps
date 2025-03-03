@@ -1,7 +1,7 @@
 > [!TIP]
 > 🤖 A collection of AI agents powered by Deepseek & Streamlit
 
-HeraCorps is a mock enterprise created by me, in order to demonstrate the capabilities of llms in automating various business functions through specialized AI agents.
+HeraCorps is a mock enterprise created by me, in order to demonstrate the capabilities of llms in automating various business functions through specialized AI agents. Some of them are just for fun/experimentation but the idea is in the code.
 
 This is just for study purposes, so be free to use the code elsewhere!
 
@@ -86,24 +86,8 @@ streamlit run models/chat_with_deepseek/[agent_folder]/[agent_file].py
 - **Frontend**: Streamlit
 - **LLM Engine**: Deepseek R1 (via Ollama)
 - **Embeddings**: HuggingFace sentence-transformers
-- **Vector Store**: FAISS
+- **Vector Store**: FAISS or QDRANT ( it will depend on the agent ) 
 - **Framework**: LangChain
-
-## 🎨 Features
-
-- Dark mode UI with cyberpunk aesthetics
-- Real-time processing
-- Memory persistence
-- Context-aware responses
-- Agent specialization
-- Interactive interfaces
-
-## 🔒 Limitations
-
-- Requires local GPU for optimal performance
-- Depends on Ollama service
-- Demo/mock implementation only
-- Not for production use
 
 ## 📜 License
 
