@@ -3,7 +3,7 @@
 
 HeraCorps is a mock enterprise created by me, in order to demonstrate the capabilities of llms in automating various business functions through specialized AI agents. Some of them are just for fun/experimentation but the idea is in the code.
 
-This is just for study purposes, so be free to use the code elsewhere!
+This is just for research purposes, so be free to use the code elsewhere!
 
 ## 🌟 Features
 
