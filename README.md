@@ -1,5 +1,5 @@
 > [!TIP]
-> 🤖 A collection of AI agents powered by Deepseek & Streamlit
+> 🤖 A collection of AI agents powered by open-source models, with Ollama
 
 HeraCorps is a mock enterprise created by me, in order to demonstrate the capabilities of llms in automating various business functions through specialized AI agents. Some of them are just for fun/experimentation but the idea is in the code.
 
