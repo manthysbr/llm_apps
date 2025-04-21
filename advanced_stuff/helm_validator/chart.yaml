@@ -1,0 +1,22 @@
+apiVersion: v2
+name: my-test-chart
+description: Um chart Helm de exemplo para testar o validador AG2
+type: application
+version: 0.1.0
+appVersion: "1.16.0" # Versão da aplicação fictícia
+
+keywords:
+- web
+- nginx
+- test
+- validation
+
+maintainers:
+- name: Seu Nome
+  email: seu.email@example.com
+
+# Exemplo de dependência (opcional, para testar check_dependencies)
+# dependencies:
+#   - name: common
+#     version: "1.10.0"
+#     repository: "https://charts.bitnami.com/bitnami"

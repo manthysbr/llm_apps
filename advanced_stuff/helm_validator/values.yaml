@@ -1,0 +1,160 @@
+replicaCount: 2
+
+image:
+  repository: nginx
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9113" # Exemplo para um sidecar exporter
+
+podSecurityContext:
+  fsGroup: 2000
+  # runAsUser: 1001 # Comentado para teste de segurança (deve ser detectado)
+  # runAsGroup: 3001 # Comentado para teste de segurança
+
+securityContext:
+  # capabilities:
+  #   drop:
+  #   - ALL
+  readOnlyRootFilesystem: false # Configuração não ideal para teste
+  # runAsNonRoot: true # Comentado para teste
+  # allowPrivilegeEscalation: false # Comentado para teste
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+  - host: chart-example.local
+    paths:
+    - path: /
+      pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+resources:
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    # memory: 128Mi # Comentado para teste de recursos
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75
+  # targetMemoryUtilizationPercentage: 80 # Comentado para teste
+
+  # Configuração de exemplo para um ConfigMap
+appConfig:
+  logLevel: "info"
+  featureFlags:
+    newUI: true
+    betaFeature: false
+  externalUrl: "http://example.com/api"
+
+# Configuração de exemplo para um Secret
+# Use --set ou values.yaml seguro em produção
+credentials:
+  username: "user"
+  # password: "changeme" # Hardcoded para teste (deve ser detectado)
+  apiKey: "" # Deixado vazio, pode ser preenchido via --set ou lookup
+
+# Configuração para PodDisruptionBudget
+pdb:
+  enabled: true
+  minAvailable: 1 # Ou maxUnavailable
+
+# Configuração para NetworkPolicy
+networkPolicy:
+  enabled: true
+  # Define que apenas pods com label 'app=monitor' podem acessar a porta 80
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: monitor # Exemplo restritivo
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  # Permite saída para DNS e API K8s
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - port: 53
+      protocol: UDP
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0 # Permite saída para qualquer lugar (pode ser restrito)
+    # Exclui IPs privados para evitar acesso a redes internas não intencionais
+    # except:
+    #   - 10.0.0.0/8
+    #   - 172.16.0.0/12
+    #   - 192.168.0.0/16
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Exemplo de container sidecar
+sidecarContainer:
+  enabled: true
+  name: metrics-exporter
+  image:
+    repository: prom/node-exporter # Apenas como exemplo
+    tag: v1.7.0
+    pullPolicy: IfNotPresent
+  ports:
+  - name: metrics
+    containerPort: 9113
+    protocol: TCP
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  securityContext:
+    runAsUser: 65534 # nobody
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ "ALL" ]

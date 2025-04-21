@@ -1,0 +1,19 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "my-test-chart.fullname" . }}
+  labels:
+    {{- include "my-test-chart.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.pdb.minAvailable }}
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  {{- else if .Values.pdb.maxUnavailable }}
+  maxUnavailable: {{ .Values.pdb.maxUnavailable }}
+  {{- else }}
+  minAvailable: 1 # Default if nothing is set but enabled=true
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "my-test-chart.selectorLabels" . | nindent 6 }}
+{{- end }}

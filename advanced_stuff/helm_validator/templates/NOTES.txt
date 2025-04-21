@@ -1,0 +1,29 @@
+{{/* filepath: helm-validator/templates/NOTES.txt */}}
+O chart {{ .Chart.Name }} foi instalado.
+
+Sua release é nomeada: {{ .Release.Name }}
+
+Para obter o status do seu release:
+  helm status {{ .Release.Name }}
+
+{{- if .Values.ingress.enabled }}
+Acesse a aplicação via Ingress em:
+{{- range .Values.ingress.hosts }}
+  http://{{ .host }}{{ (first .paths).path }}
+{{- end }}
+{{- else if contains "LoadBalancer" .Values.service.type }}
+Obtenha o endereço do LoadBalancer com:
+  kubectl get svc --namespace {{ .Release.Namespace }} {{ include "my-test-chart.fullname" . }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+{{- else if contains "NodePort" .Values.service.type }}
+Obtenha o NodePort com:
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "my-test-chart.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- else }}
+Use port-forward para acessar a aplicação:
+  kubectl port-forward --namespace {{ .Release.Namespace }} svc/{{ include "my-test-chart.fullname" . }} 8080:{{ .Values.service.port }}
+E acesse via http://127.0.0.1:8080
+{{- end }}
+
+Lembre-se de verificar os secrets e configurações de segurança antes de usar em produção.
+O secret gerado contém uma senha padrão '{{ .Values.credentials.password }}' se não sobrescrita.
