@@ -20,6 +20,85 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def chunk_message(message, max_tokens=1500):
+    """Divide uma mensagem longa em partes menores para evitar truncamento."""
+    if len(message) <= max_tokens:
+        return message
+    
+    # Dividir preservando parágrafos
+    chunks = []
+    paragraphs = message.split('\n\n')
+    current_chunk = ""
+    
+    for para in paragraphs:
+        if len(current_chunk) + len(para) + 2 <= max_tokens:
+            if current_chunk:
+                current_chunk += "\n\n" + para
+            else:
+                current_chunk = para
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+            if len(para) > max_tokens:
+                # Caso um parágrafo seja muito longo, divida-o
+                words = para.split()
+                current_chunk = ""
+                for word in words:
+                    if len(current_chunk) + len(word) + 1 <= max_tokens:
+                        if current_chunk:
+                            current_chunk += " " + word
+                        else:
+                            current_chunk = word
+                    else:
+                        chunks.append(current_chunk)
+                        current_chunk = word
+            else:
+                current_chunk = para
+    
+    if current_chunk:
+        chunks.append(current_chunk)
+    
+    return chunks[0] + "\n\n[Mensagem truncada devido ao tamanho]"
+
+def extract_llm_content(response):
+    """
+    Extrai o conteúdo textual de uma resposta LLM, que pode vir em diferentes formatos.
+    """
+    if response is None:
+        return "Nenhuma resposta recebida."
+        
+    # Se já for uma string, retorna diretamente
+    if isinstance(response, str):
+        return response
+        
+    # Se for um dicionário (formato comum na API de chat)
+    if isinstance(response, dict):
+        if 'content' in response:
+            return response['content']
+        # Alguns modelos retornam em formatos diferentes
+        for key in ['text', 'message', 'choices', 'result']:
+            if key in response:
+                return extract_llm_content(response[key])  # Recursivo para estruturas aninhadas
+                
+    # Se for uma lista (como retornado por alguns modelos)
+    if isinstance(response, list):
+        if response and isinstance(response[-1], dict) and 'content' in response[-1]:
+            return response[-1]['content']
+        if response:
+            return extract_llm_content(response[-1])  # Tenta o último item
+            
+    # Para outros tipos de objetos (como os objetos de resposta do AutoGen)
+    try:
+        # Tenta acessar atributos comuns
+        if hasattr(response, 'content'):
+            return response.content
+        if hasattr(response, 'message'):
+            return extract_llm_content(response.message)
+        # Em último caso, converte para string
+        return str(response)
+    except:
+        return f"Não foi possível extrair conteúdo: {str(response)[:100]}..."
+
 # --- Configurações Streamlit ---
 st.set_page_config(page_title="Validador AG2 de Templates Helm", layout="wide")
 
@@ -28,7 +107,8 @@ st.sidebar.header("Configuração do Ollama")
 ollama_url = st.sidebar.text_input("URL do Ollama", value="http://localhost:11434")
 ollama_model = st.sidebar.selectbox(
     "Modelo LLM",
-    ["codellama", "llama3.2", "mistral", "deepseek-coder-v2:16b", "gemma"],
+    ["codellama", "llama3.2", "mistral", "deepseek-coder-v2:latest", "gemma"],
+    index=0,
     help="Modelos como CodeLlama ou Llama 3.2 são recomendados para análise de código."
 )
 
@@ -327,9 +407,12 @@ appVersion: "1.0"
             message_template = f"Analise o seguinte template Helm Kubernetes:\n\n```yaml\n{template_content}\n```\n\nForneça sua análise de acordo com seu CONTEXTO e TAREFA."
 
             with ThreadPoolExecutor(max_workers=len(self.agents)) as executor:
-                # Submete cada tarefa de validação LLM
+                # Submete cada tarefa de validação LLM com o formato correto de mensagem
                 future_to_agent = {
-                    executor.submit(agent.generate_response, message_template): agent_type
+                    executor.submit(
+                        agent.generate_reply, 
+                        [{"role": "user", "content": message_template}]
+                    ): agent_type
                     for agent_type, agent in self.agents.items()
                 }
                 # Coleta os resultados conforme completam
@@ -337,7 +420,9 @@ appVersion: "1.0"
                     agent_type = future_to_agent[future]
                     try:
                         response = future.result()
-                        results["llm_validations"][agent_type] = response
+                        # Extrai apenas o conteúdo textual da resposta
+                        content = extract_llm_content(response)
+                        results["llm_validations"][agent_type] = content
                         logger.debug(f"Agente {agent_type} concluiu.")
                     except Exception as exc:
                         logger.exception(f"Agente {agent_type} gerou uma exceção: {exc}")
@@ -346,26 +431,46 @@ appVersion: "1.0"
             # --- Geração do Relatório Consolidado ---
             logger.info("Gerando relatório consolidado com o Coordinator Agent...")
             summary_message = "Resultados das validações do template Helm:\n\n"
-            summary_message += "## Validações LLM\n"
+
+            # Limite o tamanho de cada resultado individual
             for val_type, result in results["llm_validations"].items():
-                summary_message += f"### Análise de {val_type.capitalize()}\n{result}\n\n"
+                # Limite cada análise individual a um tamanho gerenciável
+                trimmed_result = chunk_message(result) if isinstance(result, str) else "Erro ao obter resultado"
+                summary_message += f"### Análise de {val_type.capitalize()}\n{trimmed_result}\n\n"
 
-            summary_message += "## Validações Técnicas (CLI)\n"
+            # Limite as saídas técnicas também
+            cli_summary = "## Validações Técnicas (CLI)\n"
             for tool, output in results["technical_validations"].items():
-                 summary_message += f"### {tool.replace('_', ' ').title()}\n```\n{output}\n```\n\n"
+                tool_name = tool.replace('_', ' ').title()
+                # Limite o tamanho da saída técnica
+                if len(output) > 500:  # Limite arbitrário para saídas de ferramentas
+                    output = output[:497] + "..."
+                cli_summary += f"### {tool_name}\n```\n{output}\n```\n\n"
 
+            summary_message += cli_summary
             summary_message += "\n---\nTAREFA: Com base nos resultados acima, produza um relatório consolidado em Markdown, priorizando os problemas críticos."
 
             try:
-                summary_response = self.coordinator_agent.generate_response(summary_message)
-                results["summary"] = summary_response
+                # Use o modelo para resumir primeiro os resultados para reduzir tamanho
+                logger.info("Tamanho do prompt final: %d caracteres", len(summary_message))
+                
+                # Evite tokens duplos BOS adicionando contexto específico
+                formatted_message = [{"role": "system", "content": "Você é um especialista em avaliação de templates Helm."}, 
+                                    {"role": "user", "content": summary_message}]
+                                    
+                summary_response = self.coordinator_agent.generate_reply(formatted_message)
+                # Extrai o conteúdo da resposta do coordenador
+                results["summary"] = extract_llm_content(summary_response)
                 logger.info("Relatório consolidado gerado.")
             except Exception as e:
-                 logger.exception("Erro ao gerar relatório consolidado pelo Coordinator Agent.")
-                 results["summary"] = f"ERRO: Falha ao gerar o sumário consolidado: {str(e)}"
-
-        logger.info("Validação completa.")
-        return results
+                logger.exception("Erro ao gerar relatório consolidado pelo Coordinator Agent.")
+                results["summary"] = f"ERRO: Falha ao gerar o sumário consolidado: {str(e)}"
+                # Tente uma versão simplificada como fallback
+                results["summary"] = "## Resumo da Análise\n\nNão foi possível gerar um relatório completo devido a limitações do modelo.\n\n### Principais Pontos:\n\n"
+                for val_type, result in results["llm_validations"].items():
+                    if isinstance(result, str) and len(result) > 10:
+                        results["summary"] += f"- **{val_type.capitalize()}**: {result[:100]}...\n"
+            return results
 
 # --- Inicialização do Sistema ---
 # Cacheia o recurso para evitar recriar agentes a cada interação
@@ -467,13 +572,18 @@ if validation_button and uploaded_file:
 # Mostrar resultados quando disponíveis
 if "validation_results" in st.session_state:
     results = st.session_state.validation_results
-    st.divider()
-    st.header("Relatório de Validação Consolidado")
-
-    if "summary" in results and results["summary"]:
-        st.markdown(results["summary"])
+    
+    # Verificação adicional para evitar erro com resultados nulos
+    if results is None:
+        st.error("A validação não retornou resultados. Tente novamente ou escolha outro arquivo/modelo.")
     else:
-        st.warning("O relatório consolidado não pôde ser gerado.")
+        st.divider()
+        st.header("Relatório de Validação Consolidado")
+
+        if "summary" in results and results["summary"]:
+            st.markdown(results["summary"])
+        else:
+            st.warning("O relatório consolidado não pôde ser gerado.")
 
     st.subheader("Detalhes das Validações")
 

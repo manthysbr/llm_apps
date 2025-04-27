@@ -1,0 +1,57 @@
+# helm_test_template.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-configmap
+data:
+  myvalue: "Hello World"
+  database_url: "postgresql://user:password@postgres:5432/mydb"  # Senha em texto plano (problema de segurança)
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-service
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: {{ .Release.Name }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-deployment
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      containers:
+      - name: {{ .Release.Name }}
+        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        # Sem securityContext (problema de segurança)
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: {{ .Release.Name }}-configmap
+              key: database_url
+        resources: 
+          # Sem limits (problema de recursos)
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+        # Sem probes (problema de boas práticas)

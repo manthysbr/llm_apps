@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: { ? { include "chart-name.fullname" . } }
+  labels:
+    app: { ? { .Release.Name } }
+    chart: { ? { .Chart.Name } }
+spec:
+  replicas: { ? { .Values.replicaCount } }
+  selector:
+    matchLabels:
+      app: { ? { .Release.Name } }
+  template:
+    metadata:
+      labels:
+        app: { ? { .Release.Name } }
+    spec:
+      containers:
+      - name: { ? { .Chart.Name } }
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        ports:
+        - containerPort: 80
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+          # Comentado propositalmente para teste
+          # requests:
+          #   cpu: 50m
+          #   memory: 64Mi
+        env:
+        - name: DB_PASSWORD # Propositalmente inseguro para teste
+          value: "password123"

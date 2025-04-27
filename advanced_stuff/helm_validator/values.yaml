@@ -68,6 +68,12 @@ resources:
     cpu: 100m
     # memory: 128Mi # Comentado para teste de recursos
 
+replicaCount: 1
+
+image:
+  repository: nginx
+  tag: latest
+
 autoscaling:
   enabled: true
   minReplicas: 2
