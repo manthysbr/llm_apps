@@ -1,7 +1,7 @@
 
 
 > [!TIP]
-> 🤖 Uma coleção de agentes de IA potencializados por modelos open-source, com Ollama.
+> 🤖 Uma coleção de agentes de IA potencializados por modelos open-source
 
 # Agentes e Prototipagem de IA
 
