@@ -428,17 +428,24 @@ if validation_button and uploaded_file:
         template_content = uploaded_file.getvalue().decode("utf-8")
         progress_bar.progress(10, text="Arquivo lido...")
 
-        # Validar o YAML básico antes de prosseguir
         try:
-            yaml.safe_load(template_content)
-            progress_bar.progress(20, text="YAML básico validado...")
-            logger.debug("Validação básica de YAML passou.")
+            # Tenta carregar, mas não necessariamente interrompe se for erro de template
+            list(yaml.safe_load_all(template_content)) # Use safe_load_all para múltiplos documentos
+            progress_bar.progress(20, text="Sintaxe YAML básica verificada...")
+            logger.debug("Verificação básica de sintaxe YAML passou ou foi ignorada para template.")
         except yaml.YAMLError as e:
-            st.error(f"Erro de parsing YAML no arquivo: {str(e)}")
-            logger.error(f"Erro de parsing YAML: {e}")
-            st.stop() # Interrompe a execução se o YAML for inválido
+            # Verifica se o erro parece ser de template Helm
+            if "{{" in template_content and "}}" in template_content:
+                 logger.warning(f"Erro de parsing YAML detectado, possivelmente devido a template Helm. Continuando com helm lint/kubeval. Erro: {e}")
+                 st.warning(f"Aviso: Erro na validação YAML básica (pode ser sintaxe de template Helm): {e}. As validações Helm/Kubeval prosseguirão.")
+                 progress_bar.progress(20, text="Aviso: YAML básico inválido (template?), continuando...")
+            else:
+                 # Se não parece template, é um erro YAML real
+                 st.error(f"Erro crítico de parsing YAML no arquivo: {str(e)}")
+                 logger.error(f"Erro crítico de parsing YAML: {e}")
+                 st.stop() # Interrompe a execução se o YAML for inválido e não parecer template
 
-        # Processar com o sistema de validação
+        # Processar com o sistema de validação (continua mesmo com warning acima)
         progress_bar.progress(30, text="Iniciando análise completa...")
         with st.spinner("Executando validações LLM e técnicas... Isso pode levar um tempo."):
             results = validation_system.validate_template_content(template_content)
