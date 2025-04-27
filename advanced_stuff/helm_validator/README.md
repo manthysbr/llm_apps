@@ -1,5 +1,6 @@
 Este projeto demonstra a aplicação de um sistema multiagente baseado em Modelos de Linguagem Grandes (LLMs) para a validação avançada de templates Helm do Kubernetes. Utilizando a framework AutoGen (AG2) e LLMs locais (via Ollama), o sistema decompõe a complexa tarefa de validação em sub-tarefas atribuídas a agentes especializados, coordenando seus resultados para gerar um relatório consolidado. O objetivo é ir além das verificações sintáticas tradicionais (`helm lint`, `kubeval`), incorporando análise semântica de segurança, otimização de recursos e boas práticas.
 
+Resumindo - Um agente que valida templates Helm, verificando sintaxe, segurança e boas práticas usando um esquema de multiagente. O sistema utiliza LLMs locais via Ollama e é orquestrado com a framework AutoGen (AG2). A validação vai além do `helm lint` e `kubeval`, abordando aspectos de segurança, otimização de recursos e boas práticas. A interface é construída com Streamlit, permitindo upload de templates e visualização de resultados.
 ## Problema Abordado
 
 A validação de templates Helm apresenta desafios significativos:
