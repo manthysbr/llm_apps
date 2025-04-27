@@ -34,7 +34,7 @@ Oferece dois protótipos para análise de documentos jurídicos:
 1.  **Equipe Jurídica de IA**: Orquestra três sub-agentes (Pesquisa, Contratos, Estratégia) para analisar um documento PDF sob múltiplas perspectivas.
 2.  **Assistente Jurídico Brasileiro**: Implementa um pipeline RAG completo: upload de PDF, OCR (fallback), divisão de texto, vetorização (FAISS), recuperação de contexto e resposta a perguntas sobre o documento.
 
-### 💪 Agente Planejador de Saúde e Fitness
+### 💪 Agente `Planner` de Saúde e Fitness
 Gera planos personalizados de treino e nutrição com base nas informações do usuário:
 - Coleta dados como idade, peso, altura, nível de atividade, objetivos e preferências.
 - Calcula IMC e sugere métricas de acompanhamento (calorias, dias de treino).
@@ -57,7 +57,7 @@ Permite conversar sobre o conteúdo de documentos PDF carregados:
 Pipeline multi-agente para criar materiais de estudo sobre um tópico específico:
 - **Professor**: Cria uma base de conhecimento abrangente sobre o tópico.
 - **Orientador Acadêmico**: Desenha um roteiro de aprendizagem estruturado.
-- **Bibliotecário de Pesquisa**: Faz a curadoria de recursos de estudo relevantes (artigos, vídeos, etc.).
+- **Bibliotecário de Pesquisa**: Faz a curadoria de recursos de estudo relevantes com webscrapping (artigos, vídeos, etc.).
 - **Assistente de Ensino**: Cria materiais práticos, como exercícios e exemplos.
 - Permite exportar o conteúdo gerado por cada agente para arquivos Markdown.
 
