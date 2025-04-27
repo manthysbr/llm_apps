@@ -5,25 +5,25 @@
 
 # Agentes e Prototipagem de IA
 
-Esse repo é fruto de uma série de estudos e experimentos com **Agentes de IA**. O foco é criar protótipos de agentes que utilizam **Modelos de Linguagem Grande (LLMs)**, como o `deepseek-r1:14b` (entre outros), para resolver problemas específicos em diferentes domínios.
+Esse repo é fruto de uma série de estudos e experimentos com **Agentes de IA**. Minha intenção é criar protótipos de agentes que utilizam llms e slms, como o `deepseek-r1:14b` (entre outros), para resolver problemas específicos em diferentes domínios.
 
-Tudo roda localmente, utilizando o **Ollama** como backend para os LLMs. A ideia é explorar como esses agentes podem ser orquestrados para realizar tarefas complexas, utilizando diversos frameworks que facilitam a integração com LLMs de modo geral. 
+Tudo isso roda localmente, utilizando o **Ollama** como backend para os LLMs. A ideia é explorar como esses agentes podem ser orquestrados para realizar tarefas complexas, utilizando diversos frameworks que facilitam a integração com LLMs de modo geral. 
 
-### 🎮 Agente de Equipe de Desenvolvimento de Jogos
-Orquestra quatro sub-agentes especializados para criar um GDD (Game Design Document) inicial:
+### 🎮 Agente de apoio a equipe de desenvolvimento de jogos
+Orquestra quatro sub-agentes especializados para criar um prototipo para um GDD (Game Design Document) inicial:
 - **Agente de História**: Cria trama, personagens, arcos narrativos e lore.
 - **Agente de Gameplay**: Descreve loops centrais, progressão e sistemas de interação.
 - **Agente Visual**: Define guia de arte, paleta de cores, estilo de animação e som.
 - **Agente Técnico**: Recomenda motores de jogo, arquitetura, marcos e otimizações.
 
-### 📊 Agente Analista de Dados
+### 📊 Agente Data Analysis
 Interface interativa que permite gerar e executar consultas SQL em datasets (CSV/XLSX) usando linguagem natural:
 - Faz upload e pré-processamento básico dos dados (ex: colunas de data).
 - Utiliza LangChain e Ollama para entender a pergunta do usuário e gerar uma consulta SQL.
 - Executa a consulta em memória usando DuckDB e exibe os resultados.
 - Mostra o "processo de pensamento" do LLM para gerar o SQL.
 
-### 🤝 Agente de Sucesso do Cliente
+### 🤝 Agente de CS
 Simula um chatbot de suporte com memória e contexto por usuário:
 - Gera perfis de clientes sintéticos em JSON para simulação.
 - Utiliza FAISS (vector store) para armazenar e recuperar o histórico de interações do cliente, fornecendo contexto ao LLM.
