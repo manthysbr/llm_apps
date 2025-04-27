@@ -398,7 +398,6 @@ appVersion: "1.0"
             logger.info("Executando validações técnicas CLI...")
             results["technical_validations"]["helm_lint"] = self.helm_lint(temp_dir)
             results["technical_validations"]["kubeval"] = self.helm_template_validate(temp_dir)
-            # results["technical_validations"]["dependencies"] = self.check_dependencies(temp_dir) # Descomente se necessário
 
             # --- Execução das Validações LLM (Paralelo) ---
             logger.info("Executando validações LLM em paralelo...")
@@ -432,17 +431,14 @@ appVersion: "1.0"
             logger.info("Gerando relatório consolidado com o Coordinator Agent...")
             summary_message = "Resultados das validações do template Helm:\n\n"
 
-            # Limite o tamanho de cada resultado individual
             for val_type, result in results["llm_validations"].items():
-                # Limite cada análise individual a um tamanho gerenciável
                 trimmed_result = chunk_message(result) if isinstance(result, str) else "Erro ao obter resultado"
                 summary_message += f"### Análise de {val_type.capitalize()}\n{trimmed_result}\n\n"
 
-            # Limite as saídas técnicas também
             cli_summary = "## Validações Técnicas (CLI)\n"
             for tool, output in results["technical_validations"].items():
                 tool_name = tool.replace('_', ' ').title()
-                # Limite o tamanho da saída técnica
+                
                 if len(output) > 500:  # Limite arbitrário para saídas de ferramentas
                     output = output[:497] + "..."
                 cli_summary += f"### {tool_name}\n```\n{output}\n```\n\n"
@@ -451,15 +447,13 @@ appVersion: "1.0"
             summary_message += "\n---\nTAREFA: Com base nos resultados acima, produza um relatório consolidado em Markdown, priorizando os problemas críticos."
 
             try:
-                # Use o modelo para resumir primeiro os resultados para reduzir tamanho
                 logger.info("Tamanho do prompt final: %d caracteres", len(summary_message))
                 
-                # Evite tokens duplos BOS adicionando contexto específico
+                # Evite tokens duplos BOS adicionando contexto específico 
                 formatted_message = [{"role": "system", "content": "Você é um especialista em avaliação de templates Helm."}, 
                                     {"role": "user", "content": summary_message}]
                                     
                 summary_response = self.coordinator_agent.generate_reply(formatted_message)
-                # Extrai o conteúdo da resposta do coordenador
                 results["summary"] = extract_llm_content(summary_response)
                 logger.info("Relatório consolidado gerado.")
             except Exception as e:
@@ -497,7 +491,7 @@ except Exception as e:
 uploaded_file = st.file_uploader(
     "Selecione seu template Helm (arquivo YAML único)",
     type=["yaml", "yml"],
-    accept_multiple_files=False # Mantendo upload de arquivo único
+    accept_multiple_files=False
 )
 
 # Botão de validação e barra de progresso
@@ -625,16 +619,6 @@ if "validation_results" in st.session_state:
                          st.code(output, language="bash")
         else:
             st.warning("Resultados das validações técnicas não disponíveis.")
-
-    # Botão para limpar e validar outro (opcional)
-    # st.divider()
-    # if st.button("Limpar Resultados e Validar Outro"):
-    #     st.session_state.pop("validation_results", None)
-    #     st.session_state.pop("validation_progress", None)
-    #     st.session_state.pop("last_uploaded_filename", None)
-    #     logger.info("Resultados limpos pelo usuário.")
-    #     st.rerun()
-
 
 # --- Rodapé ---
 st.sidebar.divider()
